@@ -5,7 +5,7 @@
   const BAR = '[data-testid="vla-range-bar"][data-track-id="detailed"]';
   const R = globalThis.CaptionRules;
   const COLORS = { error: "#d92d20", warn: "#e08a00", ok: "#067647" };
-  let collapsed = false, chipsHTML = "", lastSig = "", lastIssues = [];
+  let collapsed = false, lastSig = "", lastIssues = [];
 
   const style = document.createElement("style");
   style.textContent = `
@@ -25,8 +25,7 @@
   #cc-panel .cc-d{flex:none;width:8px;height:8px;border-radius:50%;margin-top:5px}
   #cc-panel button{font:inherit;cursor:pointer;border:1px solid #c9cfda;background:#f6f7f9;color:#1d2433;border-radius:6px;padding:2px 8px;margin:4px 6px 0 0}
   #cc-panel button:hover{background:#e9ecf2}
-  #cc-panel .cc-s{border-top:1px solid #eef0f4;margin-top:6px;padding-top:6px}
-  #cc-panel .cc-chip{background:#eef3ff;border-color:#b9c9f5}`;
+  `;
   document.documentElement.appendChild(style);
 
   const panel = document.createElement("div");
@@ -104,7 +103,7 @@
     else if (window.CSS && CSS.highlights) { CSS.highlights.delete("cc-err"); CSS.highlights.delete("cc-warn"); }
     lastIssues = issues;
 
-    const sig = JSON.stringify([!!ta, text, aw, collapsed, chipsHTML, issues.map((i) => [i.id, i.start, i.end]), lastEmpty.map((e) => [e.a, e.b]), lastTotal]);
+    const sig = JSON.stringify([!!ta, text, aw, collapsed, issues.map((i) => [i.id, i.start, i.end]), lastEmpty.map((e) => [e.a, e.b]), lastTotal]);
     if (sig === lastSig) return; // don't rebuild the card while you're clicking it
     lastSig = sig;
     if (!ta && !lastTotal) { panel.style.display = "none"; return; }
@@ -131,7 +130,6 @@
         h += `<div class="cc-i"><span class="cc-d" style="background:${COLORS[it.sev]}"></span><div>${esc(it.msg)}<br>` +
           it.fixes.map((f, q) => `<button data-i="${n}" data-f="${q}">${esc(f.label)}</button>`).join("") + "</div></div>";
       });
-      if (ta) h += `<div class="cc-s"><button id="cc-suggest">Suggest object name</button><span id="cc-chips">${chipsHTML}</span></div>`;
       panel.innerHTML = h;
     }
     panel.style.display = "block";
@@ -145,8 +143,6 @@
     if (b.dataset.e) { const t = lastEmpty[+b.dataset.e]; if (t) t.el.click(); return; } // jump to that segment
     const ta = getTA();
     if (!ta) return;
-    if (b.id === "cc-suggest") return suggest();
-    if (b.dataset.name) return insertName(b.dataset.name);
     const fix = lastIssues[+b.dataset.i].fixes[+b.dataset.f];
     setValue(ta, R.applyFix(ta.value, fix));
   });
@@ -174,61 +170,13 @@
     }
   }, true);
 
-  function insertName(name) {
-    const ta = getTA(); if (!ta) return;
-    const v = R.check(ta.value).find((i) => i.suggest);
-    if (v) setValue(ta, R.tidy(ta.value.slice(0, v.start) + "the " + name + ta.value.slice(v.end)));
-    else {
-      const p = ta.selectionStart ?? ta.value.length;
-      setValue(ta, ta.value.slice(0, p) + name + ta.value.slice(ta.selectionEnd ?? p));
-    }
-    ta.focus();
-  }
-
-  async function grabFrame() {
-    const v = document.querySelector("video");
-    if (!v) throw new Error("no video found on the page");
-    try {
-      const c = document.createElement("canvas");
-      c.width = Math.min(640, v.videoWidth); c.height = (c.width * v.videoHeight) / v.videoWidth;
-      c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
-      return c.toDataURL("image/jpeg", 0.7);
-    } catch (_) {
-      const shot = await chrome.runtime.sendMessage({ type: "CAPTURE" });
-      if (!shot || shot.error) throw new Error((shot && shot.error) || "screenshot failed");
-      const img = new Image(); img.src = shot.url; await img.decode();
-      const r = v.getBoundingClientRect(), k = img.width / innerWidth;
-      const c = document.createElement("canvas");
-      c.width = Math.min(640, r.width * k); c.height = (c.width * r.height) / r.width;
-      c.getContext("2d").drawImage(img, r.left * k, r.top * k, r.width * k, r.height * k, 0, 0, c.width, c.height);
-      return c.toDataURL("image/jpeg", 0.7);
-    }
-  }
-
-  async function suggest() {
-    chipsHTML = " Looking at the frame…"; lastSig = ""; scan();
-    try {
-      let { geminiKey } = await chrome.storage.local.get("geminiKey");
-      if (!geminiKey) {
-        geminiKey = prompt("Paste your Gemini API key (stored only in this browser):");
-        if (!geminiKey) { chipsHTML = ""; lastSig = ""; scan(); return; }
-        await chrome.storage.local.set({ geminiKey });
-      }
-      const res = await chrome.runtime.sendMessage({ type: "SUGGEST", image: await grabFrame(), glossary: R.GLOSSARY, key: geminiKey });
-      if (res.error) throw new Error(res.error);
-      chipsHTML = res.names.map((n) => `<button class="cc-chip" data-name="${esc(n)}">${esc(n)}</button>`).join("");
-    } catch (e) {
-      chipsHTML = " Could not suggest: " + esc(e.message);
-    }
-    lastSig = ""; scan();
-  }
-
   let raf = 0;
   const queue = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(scan); };
   new MutationObserver(queue).observe(document.body, { childList: true, subtree: true, characterData: true });
   document.addEventListener("input", queue, true);
   scan();
-    // ---- Small card next to the caption box ----
+
+  // ---- Small card next to the caption box ----
   (() => {
     const WANT = new Set(["unfinished", "dangling", "object", "repeat"]);
     const mini = document.createElement("div");

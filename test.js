@@ -8,6 +8,10 @@ const cases = {
   "screenshot caption": "left hand holds the packet and right hand grabs an object then places it into the packet and then both hands folds the packet ;right hand places the packet on the side",
   "blank (not flagged live)": "   ",
   "typos": "right hand pick up the tape roll form the table",
+  "their real caption (no repeat flag expected)": "right hand picks up pliers from the metal components and left hand picks up the wire from the floor then right hand cuts the wire using pliers while left hand holds the wire; right hand places the pliers onto the component and both hands adjust the wire",
+  "then then (flag expected)": "left hand picks up the box then right hand picks up the tape then left hand places it on the table",
+  "and then (flag expected)": "and then right hand holds the box",
+  "and then mid-caption (flag expected)": "left hand holds the box and then right hand picks up the tape",
   "repeat word": "left hand picks up the the box",
 };
 for (const [name, t] of Object.entries(cases)) {

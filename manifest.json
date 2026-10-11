@@ -1,27 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Caption Check",
-  "version": "0.2.3",
-  "description": "Grammarly-style checker for annotation captions: unfinished captions, blank segments, grammar, repeated connectors, object-name suggestions.",
-  "permissions": [
-    "storage"
-  ],
-  "host_permissions": [
-    "https://*.encord.com/*",
-    "https://generativelanguage.googleapis.com/*"
-  ],
-  "background": {
-    "service_worker": "background.js"
-  },
+  "version": "0.3.0",
+  "description": "Grammarly-style checker for annotation captions.",
+  "host_permissions": ["https://*.encord.com/*"],
   "content_scripts": [
     {
-      "matches": [
-        "https://*.encord.com/*"
-      ],
-      "js": [
-        "rules.js",
-        "content.js"
-      ],
+      "matches": ["https://*.encord.com/*"],
+      "js": ["rules.js", "content.js"],
       "run_at": "document_idle"
     }
   ],
@@ -33,9 +19,6 @@
   },
   "action": {
     "default_title": "Caption Check",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "32": "icons/icon32.png"
-    }
+    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png" }
   }
 }

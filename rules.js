@@ -1,8 +1,5 @@
 // Caption rules engine. Pure functions, no DOM, so it can be tested in Node.
 (function (root) {
-  // Preferred object names for your project. Used to steer the "suggest name" button.
-  const GLOSSARY = []; // e.g. ["cardboard box", "tape roll", "packet"]
-
   // Action verbs (base form). Add the verbs your tasks use.
   const BASE = new Set((
     "pick grab hold place put move slide fold unfold open close push pull press lift lower turn rotate flip insert remove take set " +
@@ -15,7 +12,7 @@
 
   const PARTICLES = new Set(["up", "down", "out", "in", "off", "on", "away", "over", "back", "into", "onto", "together", "apart", "aside"]);
   const CONNECTORS = ["and", "then", "while", "but"];
-  const ALT_UNITS = ["and", "then", "while", ";", "and then"];
+  const ALT_UNITS = ["and", "then", "while", ";"];
 
   const isAdv = (w) => /ly$/.test(w);
   const cands = (w) => {
@@ -57,7 +54,6 @@
       const t = toks[i];
       let unit = null, endIdx = i;
       if (t.l === ";") unit = ";";
-      else if (t.l === "and" && toks[i + 1] && toks[i + 1].l === "then") { unit = "and then"; endIdx = i + 1; }
       else if (CONNECTORS.includes(t.l)) unit = t.l;
       if (!unit) continue;
       let j = endIdx + 1;
@@ -65,7 +61,8 @@
       const n = toks[j];
       if (n) {
         const nextIsClause = handAt(toks, j) || (/s$/.test(n.l) && baseOf(n.l) !== null);
-        if (nextIsClause) out.push({ unit, start: t.s, end: toks[endIdx].e, next: handAt(toks, j) ? toks[j].l + " " + toks[j + 1].l : n.w });}
+        if (nextIsClause) out.push({ unit, start: t.s, end: toks[endIdx].e, next: handAt(toks, j) ? toks[j].l + " " + toks[j + 1].l : n.w });
+      }
       i = endIdx;
     }
     return out;
@@ -130,27 +127,32 @@
     if (last && (CONNECTORS.includes(last.l) || last.l === ";"))
       add({ id: "dangling", sev: "error", start: last.s, end: last.e, msg: `Caption ends with "${last.w}". Finish it or remove it.` });
 
-    // 3) Same connector repeated to join actions
+    // 3) The same connector used twice IN A ROW to join actions (and ... and, then ... then).
+    //    A mix like and / then / while / ; / and is fine, even if "and" shows up again later.
     const joiners = findJoiners(toks);
-    const used = new Set(joiners.map((x) => x.unit));
-    const groups = {};
-    joiners.forEach((x) => (groups[x.unit] = groups[x.unit] || []).push(x));
-    Object.keys(groups).forEach((unit) => {
-      const arr = groups[unit];
-      if (arr.length < 2) return;
-      arr.slice(1).forEach((x) => {
-        const alts = ALT_UNITS.filter((u) => !used.has(u));
-        add({
-          id: "repeat", sev: "warn", start: x.start, end: x.end,
-          msg: `"${unit}" is repeated before "${x.next}". Use then / while / ;`,
-          fixes: alts.map((u) => ({ label: `Use "${u}"`, start: x.start, end: x.end, text: u })),
-        });
+    joiners.forEach((x, i) => {
+      const prev = joiners[i - 1], next = joiners[i + 1];
+      if (!prev || prev.unit !== x.unit) return;
+      if (/\band\s+$/i.test(text.slice(0, x.start))) return; // part of "and then", reported below
+      const alts = ALT_UNITS.filter((u) => u !== x.unit && !(next && u === next.unit));
+      add({
+        id: "repeat", sev: "warn", start: x.start, end: x.end,
+        msg: `"${x.unit}" is used twice in a row, before "${x.next}". Use then / while / ;`,
+        fixes: alts.map((u) => ({ label: `Use "${u}"`, start: x.start, end: x.end, text: u })),
       });
     });
 
+    // 3b) "and then" together is not allowed: use only one connector (shown in the small card as a "repeat" issue)
+    for (const m of text.matchAll(/\band\s+then\b/gi))
+      add({
+        id: "repeat", sev: "error", start: m.index, end: m.index + m[0].length,
+        msg: '"and then" together is not allowed. Use only one: then / and / while / ;',
+        fixes: ["then", "and", "while", ";"].map((u) => ({ label: `Use "${u}"`, start: m.index, end: m.index + m[0].length, text: u })),
+      });
+
     // 4) Vague object words
     for (const m of text.matchAll(/\b(?:an?|the|some)\s+(?:object|item|thing|stuff)s?\b|\b(?:something|anything)\b/gi))
-      add({ id: "vague", sev: "warn", suggest: true, start: m.index, end: m.index + m[0].length, msg: `"${m[0]}" is vague. Name the object.` });
+      add({ id: "vague", sev: "warn", start: m.index, end: m.index + m[0].length, msg: `"${m[0]}" is vague. Name the object.` });
 
     // 5) Spacing around ";"
     for (const m of text.matchAll(/ +;/g))
@@ -172,7 +174,7 @@
     return issues.sort((a, b) => a.start - b.start);
   }
 
-  const api = { check, applyFix, tidy, GLOSSARY };
+  const api = { check, applyFix, tidy };
   root.CaptionRules = api;
   if (typeof module !== "undefined") module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
