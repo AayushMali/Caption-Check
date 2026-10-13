@@ -34,6 +34,55 @@
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const getTA = () => document.querySelector(SEL);
 
+  // Strict checks (must name a hand, unknown words) apply only on the Detailed Caption track.
+  const detailedOn = () => {
+    const b = document.querySelector('[data-testid="vla-track-label"][data-track-id="detailed"]');
+    return !b || b.dataset.active !== "false";
+  };
+  // Words the task already uses: the label bank, the high-level caption, and the suggested captions.
+  let vocab = new Set(), lbWords = new Set(), lbAt = 0;
+  function refreshVocab() {
+    const now = Date.now();
+    if (!lbWords.size || now - lbAt > 10000) {
+      lbAt = now;
+      const lb = document.querySelector("[data-vla-label-bank]");
+      if (lb) lbWords = new Set(lb.textContent.toLowerCase().match(/[a-z][a-z'-]*/g) || []);
+    }
+    const v = new Set(lbWords);
+    const add = (t) => (t.toLowerCase().match(/[a-z][a-z'-]*/g) || []).forEach((w) => v.add(w));
+    document.querySelectorAll('[data-testid="vla-range-bar"]:not([data-track-id="detailed"]) [data-testid="vla-range-text"]').forEach((e) => add(e.textContent));
+    document.querySelectorAll(`${OPTS} ${CARD}`).forEach((c) => { const el = c.querySelector("p.text-sm") || c.querySelector(".sr-only"); if (el) add(el.textContent); });
+    vocab = v;
+  }
+  // Custom allowed words (exception list) stored in localStorage so they persist across tasks.
+  let customWords = new Set();
+  try {
+    const saved = localStorage.getItem("cc_custom_words");
+    if (saved) JSON.parse(saved).forEach((w) => customWords.add(w.toLowerCase()));
+  } catch (_) {}
+
+  function allowWord(w) {
+    if (!w) return;
+    w = w.toLowerCase().trim();
+    if (!w) return;
+    customWords.add(w);
+    try {
+      localStorage.setItem("cc_custom_words", JSON.stringify([...customWords]));
+    } catch (_) {}
+    scan();
+  }
+
+  function removeAllowedWord(w) {
+    if (!w) return;
+    customWords.delete(w.toLowerCase().trim());
+    try {
+      localStorage.setItem("cc_custom_words", JSON.stringify([...customWords]));
+    } catch (_) {}
+    scan();
+  }
+
+  const chk = (t) => R.check(t, { strict: detailedOn(), vocab, extraWords: customWords });
+
   // Annotate mode = past Step 1 (segmenting). Only then does an uncaptioned segment count as a problem.
   const annotating = () => !document.querySelector('[data-testid="chorus-segment-step-intro"]') && !!(document.querySelector(OPTS) || getTA());
   let lastEmpty = [], lastTotal = 0;
@@ -93,17 +142,18 @@
   }
 
   function scan() {
+    refreshVocab();
     scanCards();
     scanBars();
     const ta = getTA();
     const aw = awaiting();
     const text = ta ? ta.value : "";
-    const issues = ta ? R.check(text) : [];
+    const issues = ta ? chk(text) : [];
     if (ta) underline(ta, issues);
     else if (window.CSS && CSS.highlights) { CSS.highlights.delete("cc-err"); CSS.highlights.delete("cc-warn"); }
     lastIssues = issues;
 
-    const sig = JSON.stringify([!!ta, text, aw, collapsed, issues.map((i) => [i.id, i.start, i.end]), lastEmpty.map((e) => [e.a, e.b]), lastTotal]);
+    const sig = JSON.stringify([!!ta, text, aw, collapsed, [...customWords].sort(), issues.map((i) => [i.id, i.start, i.end]), lastEmpty.map((e) => [e.a, e.b]), lastTotal]);
     if (sig === lastSig) return; // don't rebuild the card while you're clicking it
     lastSig = sig;
     if (!ta && !lastTotal) { panel.style.display = "none"; return; }
@@ -130,29 +180,68 @@
         h += `<div class="cc-i"><span class="cc-d" style="background:${COLORS[it.sev]}"></span><div>${esc(it.msg)}<br>` +
           it.fixes.map((f, q) => `<button data-i="${n}" data-f="${q}">${esc(f.label)}</button>`).join("") + "</div></div>";
       });
+      if (customWords.size) {
+        h += `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #eef0f4;font-size:11px;color:#5b6475">` +
+          `<b>Allowed exceptions:</b> ${[...customWords].map((w) => `<span style="background:#eef0f4;border-radius:4px;padding:1px 5px;margin:2px 2px 2px 0;display:inline-block;color:#1d2433">${esc(w)} <span style="cursor:pointer;color:#d92d20;font-weight:bold" data-delword="${esc(w)}">&times;</span></span>`).join("")}</div>`;
+      }
+      h += `<div style="display:flex;gap:4px;margin-top:6px"><input id="cc-add-word-input" placeholder="Add word exception..." style="flex:1;font:inherit;font-size:11px;padding:2px 6px;border:1px solid #c9cfda;border-radius:4px" /><button data-addword="1" style="margin:0;font-size:11px;padding:2px 8px">+ Allow</button></div>`;
       panel.innerHTML = h;
     }
     panel.style.display = "block";
   }
 
-  panel.addEventListener("mousedown", (e) => e.preventDefault()); // keep focus in the caption box
+  panel.addEventListener("mousedown", (e) => { if (!e.target.closest("input")) e.preventDefault(); }); // keep focus in the caption box unless typing in the input
   panel.addEventListener("click", (e) => {
     if (e.target.closest("[data-toggle]")) { collapsed = !collapsed; scan(); return; }
+    const del = e.target.closest("[data-delword]");
+    if (del) { removeAllowedWord(del.dataset.delword); return; }
     const b = e.target.closest("button");
     if (!b) return;
+    if (b.dataset.addword) {
+      const inp = panel.querySelector("#cc-add-word-input");
+      if (inp && inp.value.trim()) {
+        inp.value.split(/[,;\s]+/).forEach((w) => allowWord(w));
+        inp.value = "";
+      }
+      return;
+    }
     if (b.dataset.e) { const t = lastEmpty[+b.dataset.e]; if (t) t.el.click(); return; } // jump to that segment
     const ta = getTA();
     if (!ta) return;
-    const fix = lastIssues[+b.dataset.i].fixes[+b.dataset.f];
+    const it = lastIssues[+b.dataset.i];
+    const fix = it && it.fixes && it.fixes[+b.dataset.f];
+    if (!fix) return;
+    if (fix.action === "whitelist" || fix.word) {
+      allowWord(fix.word);
+      return;
+    }
     setValue(ta, R.applyFix(ta.value, fix));
   });
+  panel.addEventListener("keydown", (e) => {
+    if (e.target.id === "cc-add-word-input" && e.key === "Enter") {
+      e.preventDefault();
+      const val = e.target.value.trim();
+      if (val) {
+        val.split(/[,;\s]+/).forEach((w) => allowWord(w));
+        e.target.value = "";
+      }
+    }
+  });
 
-  // Alt+Q applies the first available fix (free in Chrome and in Encord's shortcut list).
+  // Alt+Q (Option+Q on Mac) applies the first available fix.
   document.addEventListener("keydown", (e) => {
     if (!(e.altKey && !e.ctrlKey && !e.shiftKey && e.code === "KeyQ")) return;
     const ta = getTA(); if (!ta) return;
-    const it = R.check(ta.value).find((i) => i.fixes.length);
-    if (it) { e.preventDefault(); setValue(ta, R.applyFix(ta.value, it.fixes[0])); }
+    e.preventDefault(); // Stop 'œ' from being typed on macOS
+    const it = chk(ta.value).find((i) => i.fixes.length);
+    if (it) {
+      const fix = it.fixes[0];
+      if (fix.action === "whitelist" || fix.word) {
+        allowWord(fix.word);
+      } else {
+        setValue(ta, R.applyFix(ta.value, fix));
+      }
+    }
   }, true);
 
   // Warn before Submit if anything is uncaptioned or has errors. You can still choose to submit.
@@ -163,7 +252,8 @@
     const texts = [...document.querySelectorAll(BAR)].map((b) => ((b.querySelector('[data-testid="vla-range-text"]') || {}).textContent || "").trim());
     const empty = texts.filter((t) => !t).length;
     if (empty) probs.push(`${empty} of ${texts.length} segment(s) have no caption`);
-    const bad = texts.filter((t) => t && R.check(t).some((i) => i.sev === "error")).length;
+    refreshVocab();
+    const bad = texts.filter((t) => t && chk(t).some((i) => i.sev === "error")).length;
     if (bad) probs.push(`${bad} caption(s) have errors`);
     if (probs.length && !confirm("Caption Check found:\n- " + probs.join("\n- ") + "\n\nSubmit anyway?")) {
       e.preventDefault(); e.stopImmediatePropagation();
@@ -178,7 +268,7 @@
 
   // ---- Small card next to the caption box ----
   (() => {
-    const WANT = new Set(["unfinished", "dangling", "object", "repeat"]);
+    const WANT = new Set(["unfinished", "dangling", "object", "repeat", "nohand", "unknown", "label", "vague", "symbol"]);
     const mini = document.createElement("div");
     mini.id = "cc-mini";
     const st = document.createElement("style");
@@ -191,7 +281,7 @@
     function place() {
       const ta = document.querySelector(SEL);
       if (!ta || !ta.value.trim()) { mini.style.display = "none"; sig = ""; return; }
-      shown = R.check(ta.value).filter((i) => WANT.has(i.id));
+      shown = chk(ta.value).filter((i) => WANT.has(i.id));
       if (!shown.length) { mini.style.display = "none"; sig = ""; return; }
       const s = JSON.stringify(shown.map((i) => [i.id, i.start, i.end, i.msg]));
       if (s !== sig) {
@@ -210,7 +300,15 @@
     mini.addEventListener("click", (e) => {
       const b = e.target.closest("button"), ta = document.querySelector(SEL);
       if (!b || !ta) return;
-      setValue(ta, R.applyFix(ta.value, shown[+b.dataset.i].fixes[+b.dataset.f]));
+      const it = shown[+b.dataset.i];
+      const fix = it && it.fixes && it.fixes[+b.dataset.f];
+      if (!fix) return;
+      if (fix.action === "whitelist" || fix.word) {
+        allowWord(fix.word);
+        place();
+        return;
+      }
+      setValue(ta, R.applyFix(ta.value, fix));
     });
     let raf = 0;
     const q = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(place); };
